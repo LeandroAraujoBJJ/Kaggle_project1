@@ -1,6 +1,6 @@
 ---
 title: "clientes_banco"
-author: "Leandro Goulart de Araujo"
+author: "Leandro Araujo"
 date: "10/10/2021"
 output:
   html_document:
