@@ -1,0 +1,568 @@
+---
+title: "clientes_banco"
+author: "Leandro Goulart de Araujo"
+date: "10/10/2021"
+output:
+  html_document:
+    df_print: paged
+---
+
+Primeiramente, irei carregar os pacotes necessários para esse projeto. Durante esse teste, irei adicionar os pacotes assim que achar necessário.
+```{r}
+pacotes <- c("tibble", "tidyverse", "cluster", "dendextend", "factoextra", 
+             "fpc", "gridExtra", "readxl", "plotly","tidyverse","knitr",
+             "kableExtra","car","rgl", "PerformanceAnalytics","reshape2",
+             "rayshader","psych","pracma", "polynom","rqPen","ggrepel",
+             "sp","tmap","magick", "jtools", "lmtest", "caret", "pROC",
+             "ROCR", "nnet", "cowplot", "sjPlot", "FactoMineR", "cabootcrs",
+             "gifski", "gganimate", "plot3D", "fastDummies", "ggpubr", 
+             "nortest", "pid")
+
+
+if(sum(as.numeric(!pacotes %in% installed.packages())) != 0){
+  instalador <- pacotes[!pacotes %in% installed.packages()]
+  for(i in 1:length(instalador)) {
+    install.packages(instalador, dependencies = T)
+    break()}
+  sapply(pacotes, require, character = T) 
+} else {
+  sapply(pacotes, require, character = T) 
+}
+```
+Abrindo o banco de dados e olhando as atribuições das variáveis:
+
+```{r}
+data_set_all <- read.csv("bank_customers.csv", sep = ",")
+glimpse(data_set_all)
+head(data_set_all)
+```
+
+Algumas importantes variáveis que irei utilizar na aplicação das técnicas de machine learning estão em caracter. Irei colocá-las como fator para que as funções funcionem corretamente e essas variáveis sejam consideradas categóricas. Variáveis como CustomerId e Surname não influenciam no modelo e no estudo, logo, irei considerá-las como caracteres.
+
+```{r}
+data_set_all <- data_set_all %>%
+  column_to_rownames(var = "RowNumber") %>%
+  mutate(CustomerId = as.character(CustomerId),
+         Geography = as.factor(Geography),
+         Gender = as.factor(Gender),
+         HasCrCard = as.factor(HasCrCard),
+         IsActiveMember = as.factor(IsActiveMember),
+         Exited = as.factor(Exited))
+class(data_set_all)
+glimpse(data_set_all)
+head(data_set_all)
+```
+Vou iniciar o estudo tentando agrupar observações e posteriormente agrupar variáveis.
+Isso é feito para diagnóstico e também para redução dimensional.
+Para isso, irei utilizar as técnicas de machine learning chamadas de clustering e análise por componentes principais. 
+
+<h2>Machine Learning Não Supervisionado</h2>
+
+Ambas técnicas são realizadas para dados quantitativos. Logo, se faz necessário desconsiderar as variáveis qualitativas do banco de dados.
+
+
+```{r}
+quant_data <- data_set_all %>%
+  dplyr::select(where(is.numeric))
+head(quant_data)
+```
+A variável "quant_data" possui apenas as variáveis quantitativas do banco de dados "data_set_all".
+Para realizar o clustering, as variáveis devem ser padronizadas. Para isso, irei utilizar a função scale().
+
+```{r}
+quant_data.padronizado <- scale(quant_data)
+head(quant_data.padronizado)
+```
+Já que são muitas observações, com muitas variáveis, a clusterização hierárquica é a mais apropriada.
+Irei utilizar a clusterização não hierárquica via k-means, com a função kmeans() e plotar utilizando a função fviz_cluster
+
+```{r}
+quant_data.k2 <- kmeans(quant_data.padronizado, centers = 2)
+fviz_cluster(quant_data.k2, data = quant_data.padronizado, 
+             main = "Cluster Kmeans")
+```
+
+A primeira análise é verificar o quanto as duas dimensões Dim 1 e Dim 2 explicam as observações do banco de dados. Nesse caso, `r 21.9 + 16.9`%. 
+Testando a adição de mais centros para clusterização e plotando-os:
+
+```{r}
+quant_data.k3  <- kmeans(quant_data.padronizado, centers = 3)
+quant_data.k4  <- kmeans(quant_data.padronizado, centers = 4)
+quant_data.k5  <- kmeans(quant_data.padronizado, centers = 5)
+
+G1  <- fviz_cluster(quant_data.k2,  geom = "point", 
+                    data = quant_data.padronizado) + ggtitle("k = 2")
+G2  <- fviz_cluster(quant_data.k3,  geom = "point", 
+                    data = quant_data.padronizado) + ggtitle("k = 3")
+G3  <- fviz_cluster(quant_data.k4,  geom = "point", 
+                    data = quant_data.padronizado) + ggtitle("k = 4")
+G4  <- fviz_cluster(quant_data.k5,  geom = "point", 
+                    data = quant_data.padronizado) + ggtitle("k = 5")
+
+grid.arrange(G1, G2, G3, G4, nrow = 2)
+```
+Foi possível perceber que é bastante difícil separar as observações em grupos, possivelmente devido à variabilidade das observações em relação a todas as variáveis quantitativas.
+Dessa forma, o clustering não é uma técnica adequada para diagnóstico das observações dessa base de dados.
+A técnica do "cotovelo" indica claramente essa dificuldade, já que mesmo dividindo-se a base de dados em 10 clusters, a soma dos quadrados totais ainda se mantêm muito alta, saindo de aprox. 60 mil (1 cluster) para aprox. 30 mil (10 clusters):
+```{r}
+fviz_nbclust(quant_data.padronizado, kmeans, method = "wss")
+```
+
+Uma segunda abordagem é verificar se as variáveis podem ser agrupadas, com o objetivo de redução dimensional.
+Para isso, irei aplicar a técnica de análise por componentes principais, conhecida pela sigla em inglês PCA.
+Para o PCA, apenas os dados quantitativos serão utilizados. Para verificação dos dados qualitativos, a técnica adequada é a análise por correspondência.
+
+O primeiro passo é verificar se há correlação entre as variáveis. Para isso, irei utilizar a função chart.Correlation:
+
+```{r}
+chart.Correlation(quant_data, histogram = TRUE, pch = "+")
+```
+Essa imagem proveniente da função chart.Correlation traz muitas informações.
+i) O CreditScore segue aparentemente uma distribuição normal (simétrica);
+
+```{r}
+ggqqplot(quant_data$CreditScore)
+
+# A função sf.test (Shapiro-Francia) só funciona com valores de observações entre 3 e 5000. Já que o banco de dados conta com mais que isso de observações, logo, irei modificar a função e fazer uma nova:
+
+new.shapiro <- function (x) 
+{
+    DNAME <- deparse(substitute(x))
+    x <- sort(x[complete.cases(x)])
+    n <- length(x)
+    if ((n < 5 || n > 10000)) 
+        stop("sample size must be between 5 and 10000")
+    y <- qnorm(ppoints(n, a = 3/8))
+    W <- cor(x, y)^2
+    u <- log(n)
+    v <- log(u)
+    mu <- -1.2725 + 1.0521 * (v - u)
+    sig <- 1.0308 - 0.26758 * (v + 2/u)
+    z <- (log(1 - W) - mu)/sig
+    pval <- pnorm(z, lower.tail = FALSE)
+    RVAL <- list(statistic = c(W = W), p.value = pval, method = "Shapiro-Francia normality test", 
+        data.name = DNAME)
+    class(RVAL) <- "htest"
+    return(RVAL)
+}
+
+new.shapiro(quant_data$CreditScore)
+```
+
+Na verdade, o <em>CreditScore</em> não segue uma distribuição normal, como indicado pelo gráfico e pelo p-value < 0.05 feito a partir da função de Shapiro-Francia modificado para suportar número de observações superiores a 5000.
+
+ii) A variável Balance (no gráfico ChartCorrelation) tem uma concentração importante próxima a zero, seguida de uma distribuição aparentemente simética e "achatada".
+
+iii) Não há correlação importante entre quaisquer variáveis, como mostrado no gráfico ChartCorrelation.
+
+É possível também construir um mapa de calor como outra forma de verificar a correlação entre as variáveis
+Para isso, vou salvar as correlações dos dados de "quant_data", medidos via função cor() e plotar o mapa de calor. Para plotar o mapa, é necessário transformar o bando de dados do formato tidy(wide) para o formato long. Farei isso por meio da função melt()
+
+```{r}
+rho_quant_data <- cor(quant_data)
+rho_quant_data %>% 
+  melt() %>% 
+  ggplot() +
+  geom_tile(aes(x = Var1, y = Var2, fill = value)) +
+  geom_text(aes(x = Var1, y = Var2, label = round(x = value, digits = 3)),
+            size = 4) +
+  labs(x = NULL,
+       y = NULL,
+       fill = "Correlacoes") +
+  scale_fill_gradient2(low = "dodgerblue4", 
+                       mid = "white", 
+                       high = "brown4",
+                       midpoint = 0) +
+  theme(panel.background = element_rect("white"),
+        panel.grid = element_line("grey95"),
+        panel.border = element_rect(NA),
+        legend.position = "bottom",
+        axis.text.x = element_text(angle = 0))
+```
+
+A última imagem mostra com mais clareza como a correlação de Pearson (R) é próxima de zero entre essas variáveis. Visualmente, já é possível observar que não será possível fazer PCA para esse banco de dados, já que é necessário que haja correlação entre pelo menos duas variáveis.
+Para confirmar, irei utilizar do teste de Bartlett, por meio da função cortest.bartlett:
+
+```{r}
+cortest.bartlett(R = rho_quant_data)
+```
+O p-value foi superior a 0.05 (95% de confiança). Com isso, é possível observar que a matrix de correlações não é significativamente diferente de zero, apontando que o PCA não é uma técnica que deva ser aplicada a esse banco de dados, não sendo possível diminuir a dimensão das variáveis quantitativas.
+
+Para finalizar a aplicação de técnicas de machine learning não supervisionadas, irei verificar se é possível reduzir a dimensionalidade das variáveis qualitativas do banco de dados. Para isso, irei empregar a Análise de Correspondências Múltiplas (>2 variáveis independentes qualitativas, ACM)
+
+Ao contrário do que foi realizado nas técnicas anteriores, agora irei considerar apenas as variáveis qualitativas.
+
+```{r}
+quali_data <- data_set_all %>% 
+  select(where(is.factor)) %>% 
+  select(-one_of("Exited"))
+head(quali_data)
+```
+Para esse técnica, é necessário fazer tabelas de contingência. Já que não é possível fazer uma tabela de frequências que abranja as 5 variáveis qualitativas do bando de dados, irei fazer tabelas de duas a duas variáveis. Para isso, irei empregar a função table com a função chisq.test()
+
+
+```{r}
+# Geography x Gender
+(tab_geo_gender <- table(quali_data$Geography, 
+         quali_data$Gender))
+(qui2_geo_gender <- chisq.test(tab_geo_gender)) # p-value <0.05, indicando que essas variáveis são estatisticamente diferentes.
+
+# Geography x HasCrCard
+
+(tab_geo_card <- table(quali_data$Geography, 
+         quali_data$HasCrCard))
+(qui2_geo_card <- chisq.test(tab_geo_card)) # p-value >0.05, indicando que essas variáveis não são estatisticamente diferentes.
+
+# Geography x IsActiveMember
+
+(tab_geo_member <- table(quali_data$Geography, 
+         quali_data$IsActiveMember))
+(qui2_geo_member <- chisq.test(tab_geo_member)) # p-value >0.05, indicando que essas variáveis não são estatisticamente diferentes.
+
+# Gender x HasCrCard
+
+(tab_gender_card <- table(quali_data$Gender, 
+         quali_data$HasCrCard))
+(qui2_gender_card <- chisq.test(tab_gender_card)) # p-value >0.05, indicando que essas variáveis não são estatisticamente diferentes.
+
+# Gender x IsActiveMember
+
+(tab_gender_member <- table(quali_data$Gender, 
+         quali_data$IsActiveMember))
+(qui2_gender_member <- chisq.test(tab_gender_member)) # p-value <0.05, indicando que essas variáveis são estatisticamente diferentes.
+
+# HasCreditCard x IsActiveMember
+(tab_card_member <- table(quali_data$HasCrCard, 
+         quali_data$IsActiveMember))
+(qui2_card_member <- chisq.test(tab_card_member)) # p-value >0.05, indicando que essas variáveis não são estatisticamente diferentes.
+```
+
+Sendo uma ACM, vou começar estabelecendo uma matriz binária e em sequência uma matriz de Burt:
+
+```{r}
+# Para se estabelecer uma matriz binária:
+matriz_binaria <- getindicator(Xinput = quali_data)
+#matriz_binaria
+CA(matriz_binaria)
+
+# Para a matriz de Burt:
+matriz_burt <- getBurt(Xinput = quali_data)
+#matriz_burt
+CA(matriz_burt)
+
+# Rodando a ACM
+ACM <- MCA(quali_data, method = "Indicador")
+```
+
+O componte 'var$coord', presente no objeto ACM, contém as coordenadas de cada categoria. 
+
+```{r}
+round(ACM$var$coord, 3)
+```
+
+Já as inércias principais estão no componente "eig":
+
+```{r}
+ACM$eig
+```
+
+As coordenadas de cada observação estão no componente 'ind$coord' do objeto ACM:
+
+```{r}
+head(round(ACM$ind$coord, 3))
+```
+
+Agora, irei verificar a inércia principal explicada por dimensão:
+
+```{r}
+(categorias <- apply(quali_data,
+                    MARGIN = 2,
+                    FUN = function(x) nlevels(as.factor(x)))) #número de categorias
+(It <- (sum(categorias) - length(categorias))/length(categorias))
+
+sum(ACM$eig[,1])
+
+(It_explicada <- ACM$eig[,1] / sum(ACM$eig[,1]))
+```
+
+Não é necessário continuar a análise, já que são 5 dimensões de igual importância, logo não é possível diminuir a dimensionalidade dos dados. Além disso, plotar um gráfico 2-D ou até mesmo 3-D não trará uma percepção adequada de como essas variáveis se agrupam. A figura abaixo mostra graficamente quão próximos são esses valores:
+
+```{r}
+data.frame(Dimensão = paste("Dimensão", 1:length(It_explicada)),
+           Inércia_Total = It_explicada) %>%
+  ggplot(aes(x = Dimensão, 
+             y = Inércia_Total, 
+             label = paste0(round(Inércia_Total,3)*100,"%"))) +
+  geom_bar(stat = "identity",
+           color = "#440154FF", 
+           fill = "#287C8EFF") +
+  geom_label(vjust = 2) +
+  labs(title = paste("Inércia Total Explicada de",
+                     paste0(sum(It_explicada) * 100),"%")) +
+   theme_bw()
+```
+
+Já o número de dimensões da ACM é dado por:
+
+```{r}
+dimensoes <- sum(categorias) - length(categorias)
+dimensoes
+```
+
+Apesar da já percepção de que a aplicação da PCA não é adequada nesse banco de dados, irei plotar o mapa perceptual. Para gerar o Mapa Perceptual, irei:
+
+1º Definir o número de categorias por variável
+
+```{r}
+(categorias <- apply(quali_data, 
+                    MARGIN =  2, 
+                    FUN = function(x) nlevels(as.factor(x))))
+```
+
+2º transformar o objeto ACM em um data frame, levando-se em consideração quais tipos de coordenadas se quer plotar. Neste exemplo, utilizaremos as coordenadas dadas pela matriz de binária
+
+```{r}
+ACM_mp <- data.frame(ACM$var$coord, Variável = rep(names(categorias), categorias))
+
+ACM_mp %>%
+  rownames_to_column() %>%
+  rename(Categoria = 1) %>%
+  ggplot(aes(x = Dim.1, 
+             y = Dim.2, 
+             label = Categoria, 
+             color = Variável, 
+             shape = Variável)) +
+  geom_point() +
+  geom_label_repel() +
+  geom_vline(aes(xintercept = 0), linetype = "dashed", color = "grey") +
+  geom_hline(aes(yintercept = 0), linetype = "dashed", color = "grey") +
+  labs(x = paste("Dimensão 1:", paste0(round(ACM$eig[1,2], 2), "%")),
+       y = paste("Dimensão 2:", paste0(round(ACM$eig[2,2], 2), "%"))) +
+  scale_color_viridis_d() +
+  theme(panel.background = element_rect("white"),
+        panel.border = element_rect("NA"),
+        panel.grid = element_line("gray95"),
+        legend.position = "none")
+```
+
+Uma outra forma de plotar as posições relativas de cada observação é:
+
+```{r}
+ACM_observacoes_df <- data.frame(ACM$ind$coord)
+
+ACM_observacoes_df %>% 
+  ggplot(aes(x = Dim.1, y = Dim.2, label = data_set_all$Surname)) +
+  geom_point(shape = 17, color = "#E76F5AFF", size = 2) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey50") +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "grey50") +
+  geom_text_repel(max.overlaps = 100, size = 3) +
+  geom_density2d(color = "gray80") +
+  geom_label_repel(data = ACM_mp, 
+                   aes(x = Dim.1, y = Dim.2, 
+                       label = rownames(ACM_mp), 
+                       fill = Variável), 
+                   color = "white") +
+  labs(x = paste("Dimensão 1:", paste0(round(ACM$eig[,2][1], digits = 2), "%")),
+       y = paste("Dimensão 2:", paste0(round(ACM$eig[,2][2], digits = 2), "%"))) +
+  scale_fill_viridis_d() +
+  theme(panel.background = element_rect("white"),
+        panel.border = element_rect("NA"),
+        panel.grid = element_line("gray95"),
+        legend.position = "none")
+```
+
+As técnicas não supervisionadas trouxeram um insight importante sobre esse banco de dados. Esse insight é de que não é aparentemente possível reduzir as dimensões da base de dados, tanto em relação as observações, quanto em relação as variáveis quantitativas e qualitativas. No quesito variáveis qualitativas, um gráfico 3-D realizado por meio da análise por correspondência múltipla iria resultar num gráfico que representa apenas ~60% dos dados. Logo, não seria adequado agrupar variáveis qualitativas pois se perderiam dados importantes.
+
+Com isso posto, seguirei com a aplicação de aprendizado de máquina supervisionado, com toda a base de dados.
+
+<h3>supervised machine learning</h3>
+
+O foco desse estudo é saber o que leva o cliente a tomar a decisão de deixar o banco. Nesse caso, a variável dependente de interesse é a <b>Exited</b>
+
+Vou checar novamente o banco de dados:
+
+```{r}
+head(data_set_all)
+```
+
+Algumas considerações importantes:
+
+1. A variável dependente (y) será a <em>Exit</em>. Variável que recebe 1 ou 0, que significa que o cliente saiu ou não do banco.
+2. Há variáveis quantitativas e qualitativas. Já que há variáveis qualitativas, é necessário dummizá-las. Não será feita ponderação arbitrária dessa forma.
+3. Com base nos items (1) e (2), decidi propor um modelo logístico binário.
+
+Primeiramente, utilizarei a função summary() para um primeiro olhar estatístico sobre os dados.
+```{r}
+# Estatística univariada
+summary(data_set_all)
+```
+
+Vou também gerar uma tabela de frequências para as variáveis qualitativas, que já estão corretamente como fatores:
+
+```{r}
+# Tabela de frequências absolutas das variáveis qualitativas
+table(data_set_all$Geography)
+table(data_set_all$Gender)
+table(data_set_all$HasCrCard)
+table(data_set_all$IsActiveMember)
+```
+
+O R entende que as variáveis estão como fatores e irá tratá-las como tal no geração do modelo. Porém, a função stepwise, importante para desconsiderar do modelo as variáveis não significativas, não funciona para as variáveis qualitativas caso elas não estejam dummizadas. Logo, irei dummizar todas as variáveis qualitativas independentes. Nesse próximo código, irei também remover as variáveis originais e colocar a categoria 1 como a categoria de referência para cada variável original
+
+```{r}
+data_dummies <- dummy_columns(.data = data_set_all,
+                                    select_columns = c("Geography", 
+                                                       "Gender",
+                                                       "HasCrCard", 
+                                                       "IsActiveMember"),
+                                    remove_selected_columns = T,
+                                    remove_first_dummy = T)
+head(data_dummies)
+```
+A base de dados está preparada para rodar o modelo logístico binário. Para isso utilizarei a função glm (generalized linear models) com a family "binomial":
+
+```{r}
+modelo_Saiu <- glm(formula = Exited ~ . - CustomerId - Surname, 
+                         data = data_dummies, 
+                         family = "binomial")
+summary(modelo_Saiu)
+```
+
+Outras formas de verificar os outputs do modelo "modelo_Saiu"
+
+```{r}
+summ(modelo_Saiu, confint = T, digits = 3, ci.width = .95)
+```
+
+É possível verificar que algumas variáveis não passaram no teste, ou seja, aquelas que o p-value foi superior a 0.05 (95% intervalo de confiança).
+
+A função stepwise é capaz de verificar todas as variáveis, removendo variável por variável e re-checando o modelo.
+
+```{r}
+step_Saiu <- step(object = modelo_Saiu,
+                        k = qchisq(p = 0.05, df = 1, lower.tail = FALSE))
+summary(step_Saiu)
+```
+
+Nota-se que só ficaram as variáveis estatisticamente significativas, considerando-se os 95% de confiança.
+Irei utilizar o LogLik, utilizado para modelo ajustado via máxima verossimilhança. 
+Após, irei checar a diferença entre o modelo sem e com stepwise.
+
+```{r}
+# Valor do Loglik do modelo step_Saiu
+logLik(step_Saiu)
+
+# Comparando os modelos, sem e com o stepwise. Irei utilizar a função lrtest do pacote lmtest
+lrtest(modelo_Saiu, step_Saiu)
+
+# export_summs(modelo_Saiu, step_Saiu, scale = F,
+#              digits = 4)
+```
+
+As primeiras conclusões são:
+
+1. As variáveis de importância são "CreditScore", "Age", "Balance", "NumOfProducts", "Geography_Germany", "Gender_Male" e "IsActiveMember_1". As outras variáveis ou foram excluídas do modelo ou estão no intercepto.
+
+O modelo é então:
+
+probabilidade_de_evento(sim, sair do banco) = 1/(1+exp(-(-3.445-6.66x10^(-4)xPontuacaoCredito+7.269x10^(-2)xIdade+2.652x10^(-6)xBalanco-1.010x10^(-1)xQtdProdutos+7.608x10^(-1)xAlemanha-5.306x10^(-1)xHomem-1.072xMembroAtivo)))
+
+Para esse tipo de modelo, quanto menor o valor do beta, menor a probabilidade do evento ocorrer, e o contrário também é válido.
+
+Logo, é possível observar que maior pontuação de crédito, maior quantidade de produtos, ser homem e ser membro ativo, são variáveis que contribuem para que o cliente continue no banco. Já o aumento da idade, do balanço, e estar na Alemanha, são variáveis que contribuem para que o cliente saia do banco.
+
+Para avaliar o modelo, irei empregar a função confusionMatrix, ou seja, uma matriz de confusão. Irei utilizar o modelo gerado no stepwise.
+
+```{r}
+confusionMatrix(
+  table(predict(step_Saiu, type = "response") >= 0.20, 
+        data_set_all$Exited == "1")[2:1, 2:1])
+```
+
+A acurácia do modelo muda a depender do <em>cutoff</em> escolhido. Irá depender da escolha do negócio, ou seja, aumentar a sensitividade (evento) ou especificidade (não evento) ou tentar manter os dois próximos. Já que a ideia é prevenir a saída de pessoas do banco, ou seja, entender o evento, utilizei um <em>cutoff</em> de 0.20, que traz um valor de sensitividade maior do que se eu houvesse escolhido 0.50, por exemplo. Essa escolha ficará mais clara na análise de sensibilidade que mostratei a seguir. A escolha de <em>cutoff</em> de 0.20 produz uma acurácia de 70%, menor que a acurácia para um <em>cutoff</em> de 0.50, que seria por volta de 80% (porém com sensitividade de apenas 21%). Ressalto que igualar os valores de sensitividade e especificidade não garante a maximização da acurácia geral do modelo.
+
+Primeiro, vou predizer os dados por meio da função prediction do pacote ROCR e, a partir daí, gerar os dados para o gráfico ROC.
+
+```{r}
+predicoes <- prediction(predictions = step_Saiu$fitted.values, 
+                        labels = data_set_all$Exited)
+
+dados_curva_roc <- performance(predicoes, measure = "sens") 
+```
+
+Agora, irei utilizar a função performance() do pacote ROCR para extrair as predições dos dados de sensitividade, especificidade e cutoffs.
+
+
+```{r}
+# Extraindo os dados de sensitividade do modelo
+sensitividade <- dados_curva_roc@y.values[[1]] 
+
+# Extraindo os dados de especificidade do modelo
+especificidade <- performance(predicoes, measure = "spec") 
+especificidade <- especificidade@y.values[[1]]
+
+# Extraindo os cutoffs do objeto 'sensitividade'.
+cutoffs <- dados_curva_roc@x.values[[1]] 
+```
+
+Para plotar utilizando o ggplot, irei juntar em colunas os <em>cutoff</em>, especificidade e sensitividade. Posteriormente, irei plotar com o ggplotly que deixa o gráfico interativo. Essa é uma análise de sensibilidade.
+
+```{r}
+dados_plotagem <- cbind.data.frame(cutoffs, especificidade, sensitividade)
+head(dados_plotagem)
+
+ggplotly(dados_plotagem %>%
+           ggplot(aes(x = cutoffs, y = especificidade)) +
+           geom_line(aes(color = "Especificidade"),
+                     size = 1) +
+           geom_point(color = "#95D840FF",
+                      size = 1.9) +
+           geom_line(aes(x = cutoffs, y = sensitividade, color = "Sensitividade"),
+                     size = 1) +
+           geom_point(aes(x = cutoffs, y = sensitividade),
+                      color = "#440154FF",
+                      size = 1.9) +
+           labs(x = "Cutoff",
+                y = "Sensitividade/Especificidade") +
+           scale_color_manual("Legenda:",
+                              values = c("#95D840FF", "#440154FF")) +
+           theme_bw())
+```
+
+
+Finalmente, irei construir uma curva ROC:
+
+```{r}
+ROC <- roc(response = data_set_all$Exited, 
+           predictor = step_Saiu$fitted.values)
+
+ggplotly(
+  ggroc(ROC, color = "#440154FF", size = 1) +
+    geom_segment(aes(x = 1, xend = 0, y = 0, yend = 1),
+                 color="grey40",
+                 size = 0.2) +
+    labs(x = "Especificidade",
+         y = "Sensitividade",
+         title = paste("Area abaixo da curva:",
+                       round(ROC$auc, 3),
+                       "|",
+                       "Coeficiente de Gini",
+                       round((ROC$auc[1] - 0.5) / 0.5, 3))) +
+    theme_bw()
+)
+```
+
+A curva ROC indica a eficiência global do modelo, com 76,7%.
+
+<h2>Conclusões</h2>
+
+Um banco busca saber as razões pelas quais alguém decide não ser mais seu cliente.
+Para isso, uma série de dados foi coletada. A identificação do cliente ou ex cliente foi feita por meio de um código, além de seus sobrenomes. Além disso, dados para 6 variáveis quantitativas e 5 variáveis qualitativas foram obtidos.
+
+Primeiramente, utilizei técnicas de machine learning não supervisionadas para agrupamento de observações (clustering), de variáveis quantitativas (PCA) e de variáveis qualitativas (análise por correspondência múltipla). Essas técnicas de diagnóstico e redução dimensional não surtiram efeito nessa base de dados. Apesar de não ter sido possível reduzir sua dimensionalidade, os insights sobre o banco de dados foram importantes.
+
+Em um segundo momento, utilizei uma técnica de machine learning supervionada. Para determinar o que faz com que o cliente deixe o banco, utilizei da variável qualitativa <em>Exited</em> como a variável resposta (dependente). Decidi utilizar um modelo linear generalizado chamado modelo logístico binário (1-ex-cliente, 0-cliente). Esse modelo é capaz de predizer a probabilidade de ocorrência e não ocorrência de um dado evento. As informações do logito (alfas e betas) foram descritas e o modelo final possui boa capacidade preditiva, com aprox. 70% de sensitividade e de especificidade para um <b>cutoff</b> de 0.20. A curva ROC mostrou que o modelo tem uma acurácia de 76,7%. Dessa forma, o modelo consegue prever razoavelmente bem a probabilidade do cliente em manter-se no banco ou decidir-se por sair. O stepwise removeu todas as variáveis não estatisticamente significativas, trazendo informações importantes sobre quais são as variáveis realmente importantes para o negócio. Além disso, por meio dos sinais dos betas, foi possível verificar quais são as variáveis que o incremento promove maior probabilidade do evento, ao passo de que o inverso também é verdadeiro. A partir do modelo predito, verifiquei que a maior pontuação de crédito, a maior quantidade de produtos, ser homem e ser membro ativo, são variáveis que contribuem para que o cliente continue no banco. Já o aumento da idade, do balanço, e estar na Alemanha, são variáveis que contribuem para que o cliente saia do banco.
+
+
+
+
