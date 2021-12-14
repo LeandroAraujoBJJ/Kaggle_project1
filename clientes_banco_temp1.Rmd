@@ -8,6 +8,7 @@ output:
 ---
 
 Esse arquivo ainda será revisado e melhorado
+Esse programa foi feito em R. Futuramente, haverá esse mesmo projeto também em Python
 
 Primeiramente, irei carregar os pacotes necessários para esse projeto. Durante esse teste, irei adicionar os pacotes assim que achar necessário.
 ```{r}
