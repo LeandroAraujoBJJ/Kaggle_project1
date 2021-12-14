@@ -7,6 +7,8 @@ output:
     df_print: paged
 ---
 
+Esse arquivo ainda será revisado e melhorado
+
 Primeiramente, irei carregar os pacotes necessários para esse projeto. Durante esse teste, irei adicionar os pacotes assim que achar necessário.
 ```{r}
 pacotes <- c("tibble", "tidyverse", "cluster", "dendextend", "factoextra", 
